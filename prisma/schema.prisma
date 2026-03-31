@@ -1,0 +1,295 @@
+// MarketCourse - Schéma Prisma
+// Plateforme de commande de condiments et produits de cuisine au Togo
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  CLIENT
+  ADMIN
+  COURIER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum OrderStatus {
+  DRAFT
+  SUBMITTED
+  PENDING_ADMIN_VALIDATION
+  VALIDATED
+  REJECTED
+  ASSIGNED_TO_COURIER
+  ACCEPTED_BY_COURIER
+  PURCHASING
+  ITEM_UNAVAILABLE
+  PURCHASE_COMPLETE
+  IN_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMode {
+  CASH
+  MOBILE_MONEY
+  CARD
+  WALLET
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum AssignmentStatus {
+  PENDING
+  ACCEPTED
+  REFUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum CourierTransport {
+  MOTO
+  VELO
+  VOITURE
+  A_PIED
+}
+
+// ============================================================
+// MODÈLES
+// ============================================================
+
+/// Utilisateur - Table commune d'authentification
+model User {
+  id        String     @id @default(uuid())
+  name      String
+  phone     String     @unique
+  email     String?    @unique
+  password  String
+  role      UserRole
+  status    UserStatus @default(ACTIVE)
+  avatarUrl String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  client        Client?
+  admin         Admin?
+  courier       Courier?
+  notifications Notification[]
+  statusLogs    OrderStatusLog[] @relation("ChangedByUser")
+
+  @@map("users")
+}
+
+/// Client / Ménage
+model Client {
+  id       String  @id @default(uuid())
+  userId   String  @unique
+  address  String?
+  quartier String?
+  city     String  @default("Lomé")
+  landmark String? // Point de repère
+
+  // Relations
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@map("clients")
+}
+
+/// Administrateur
+model Admin {
+  id     String @id @default(uuid())
+  userId String @unique
+
+  // Relations
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+
+  @@map("admins")
+}
+
+/// Coursier-acheteur
+model Courier {
+  id            String           @id @default(uuid())
+  userId        String           @unique
+  zone          String?          // Zone d'opération
+  available     Boolean          @default(true)
+  transport     CourierTransport @default(MOTO)
+  avgRating     Float            @default(0)
+  totalMissions Int              @default(0)
+
+  // Relations
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignments Assignment[]
+
+  @@map("couriers")
+}
+
+/// Catégorie de produits
+model Category {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  icon      String?  // Emoji ou nom d'icône
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  // Relations
+  products Product[]
+
+  @@map("categories")
+}
+
+/// Produit du catalogue
+model Product {
+  id             String   @id @default(uuid())
+  name           String
+  categoryId     String
+  estimatedPrice Int      // Prix en FCFA
+  unit           String   // kg, tas, boîte, litre, sachet, pièce
+  imageUrl       String?
+  description    String?
+  available      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  category   Category    @relation(fields: [categoryId], references: [id])
+  orderItems OrderItem[]
+
+  @@map("products")
+}
+
+/// Commande
+model Order {
+  id              String      @id @default(uuid())
+  clientId        String
+  orderNumber     String      @unique // MCT-20260330-001
+  estimatedTotal  Int         @default(0)
+  finalTotal      Int?
+  status          OrderStatus @default(DRAFT)
+  deliveryAddress String
+  deliveryQuartier String?
+  deliveryCity    String      @default("Lomé")
+  landmark        String?     // Point de repère
+  phoneContact    String      // Numéro à contacter
+  paymentMode     PaymentMode @default(CASH)
+  desiredTime     String?     // Heure souhaitée
+  adminNote       String?     // Note de l'admin
+  rejectionReason String?     // Raison du rejet
+  deliveryFee     Int         @default(1000) // Frais de livraison en FCFA
+  serviceFee      Int         @default(500)  // Frais de service en FCFA
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  client     Client           @relation(fields: [clientId], references: [id])
+  items      OrderItem[]
+  assignment Assignment?
+  payments   Payment[]
+  statusLogs OrderStatusLog[]
+
+  @@map("orders")
+}
+
+/// Ligne de commande
+model OrderItem {
+  id              String  @id @default(uuid())
+  orderId         String
+  productId       String
+  quantity         Int
+  estimatedPrice  Int     // Prix unitaire estimé
+  finalPrice      Int?    // Prix unitaire final après achat
+  available       Boolean @default(true)
+  replacementNote String? // Note si remplacement proposé
+
+  // Relations
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+/// Affectation coursier
+model Assignment {
+  id         String           @id @default(uuid())
+  orderId    String           @unique
+  courierId  String
+  adminId    String
+  status     AssignmentStatus @default(PENDING)
+  assignedAt DateTime         @default(now())
+  acceptedAt DateTime?
+  completedAt DateTime?
+  note       String?
+
+  // Relations
+  order   Order   @relation(fields: [orderId], references: [id])
+  courier Courier @relation(fields: [courierId], references: [id])
+  admin   Admin   @relation(fields: [adminId], references: [id])
+
+  @@map("assignments")
+}
+
+/// Paiement
+model Payment {
+  id        String        @id @default(uuid())
+  orderId   String
+  amount    Int
+  mode      PaymentMode
+  status    PaymentStatus @default(PENDING)
+  reference String?       // Référence de transaction
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("payments")
+}
+
+/// Notification
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+/// Journal des statuts de commande (traçabilité)
+model OrderStatusLog {
+  id          String      @id @default(uuid())
+  orderId     String
+  status      OrderStatus
+  changedById String
+  note        String?
+  createdAt   DateTime    @default(now())
+
+  // Relations
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changedBy User  @relation("ChangedByUser", fields: [changedById], references: [id])
+
+  @@map("order_status_logs")
+}
