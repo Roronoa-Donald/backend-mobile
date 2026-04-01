@@ -68,6 +68,13 @@ export async function buildApp() {
     version: '1.0.0',
   }));
 
+  // Route racine par défaut
+  app.get('/', async () => ({
+    success: true,
+    message: 'MarketCourse API is running 🚀. Please use /api/* endpoints.',
+    timestamp: new Date().toISOString(),
+  }));
+
   // Enregistrement des routes
   await app.register(authRoutes, { prefix: '/api/auth' });
   await app.register(usersRoutes, { prefix: '/api/users' });
